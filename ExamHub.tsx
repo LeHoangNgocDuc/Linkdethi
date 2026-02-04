@@ -69,9 +69,10 @@ const ExamHub: React.FC = () => {
   const fetchCodesFromCloud = async () => {
     setIsLoadingCodes(true);
     try {
-      // Use standard GET request since the script now handles CORS and returns JSON directly
+      // credentials: 'omit' is crucial for public Google Apps Scripts to work when user is signed into Google
       const response = await fetch(
-        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`,
+        { method: 'GET', credentials: 'omit' }
       );
       
       if (!response.ok) throw new Error('Network response was not ok');
@@ -108,9 +109,14 @@ const ExamHub: React.FC = () => {
   const syncCodeToCloud = async (id: string, value: string) => {
     if (isAdmin) {
       try {
-        // Send as POST text/plain to avoid CORS preflight issues with GAS
+        // Explicitly set Content-Type to text/plain to avoid CORS Preflight (OPTIONS) requests which GAS usually fails to handle.
+        // credentials: 'omit' is required to avoid sending cookies.
         await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
+          credentials: 'omit',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
           body: JSON.stringify({ 
             action: 'save_code',
             sheetId: GOOGLE_SHEET_ID,

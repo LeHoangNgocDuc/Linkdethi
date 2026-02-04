@@ -33,8 +33,10 @@ const CurriculumView: React.FC = () => {
     setIsLoadingCodes(true);
     try {
       // Gọi lên Google Script để lấy dữ liệu từ Sheet
+      // credentials: 'omit' protects against CORS errors from Google's auth
       const response = await fetch(
-        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`,
+        { method: 'GET', credentials: 'omit' }
       );
       
       if (!response.ok) throw new Error("Network response was not ok");
@@ -58,6 +60,10 @@ const CurriculumView: React.FC = () => {
       try {
         await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
+          credentials: 'omit',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
           body: JSON.stringify({
             action: 'save_code',
             sheetId: GOOGLE_SHEET_ID,
