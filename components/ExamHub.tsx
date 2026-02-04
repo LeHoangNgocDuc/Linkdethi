@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter } from 'lucide-react';
-import { ExamType } from '../types';
-import { MOCK_EXAMS } from '../constants';
+import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X, Loader2 } from 'lucide-react';
+import { ExamType, MockExam } from '../types';
+import { MOCK_EXAMS, GOOGLE_SCRIPT_EXAM_URL, GOOGLE_SHEET_ID } from '../constants';
 import ExamRedirectButton from './ExamRedirectButton';
 
 const ExamHub: React.FC = () => {
@@ -9,10 +9,29 @@ const ExamHub: React.FC = () => {
   const [activeType, setActiveType] = useState<ExamType | 'All'>('All');
   const [isAdmin, setIsAdmin] = useState(false);
   
-  // Local state to store exam codes. 
+  // State for exam list and codes
+  const [exams, setExams] = useState<MockExam[]>([]);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
+  const [isLoadingCodes, setIsLoadingCodes] = useState(false);
+  
+  // UI States
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [tempCode, setTempCode] = useState('');
+  const [editCodeValue, setEditCodeValue] = useState('');
+  
+  const [editingExamId, setEditingExamId] = useState<string | null>(null); // For editing exam title/duration
+  const [editExamTitle, setEditExamTitle] = useState('');
+  const [editExamDuration, setEditExamDuration] = useState(0);
+
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  
+  // New Exam Form State
+  const [newExam, setNewExam] = useState({
+    title: '',
+    grade: '6',
+    type: ExamType.MID_TERM_1,
+    duration: 45,
+    code: ''
+  });
 
   const grades = ['6', '7', '8', '9', '10', '11', '12'];
   
@@ -29,7 +48,6 @@ const ExamHub: React.FC = () => {
     return baseTypes;
   };
 
-  // Helper to get short label for filter buttons
   const getShortLabel = (type: ExamType) => {
     switch(type) {
       case ExamType.MID_TERM_1: return 'GKI';
@@ -45,33 +63,174 @@ const ExamHub: React.FC = () => {
   useEffect(() => {
     const adminStatus = localStorage.getItem('isAdmin') === 'true';
     setIsAdmin(adminStatus);
-    const savedCodes = localStorage.getItem('examCodes');
-    if (savedCodes) {
-      setExamCodes(JSON.parse(savedCodes));
-    }
+    fetchCodesFromCloud();
   }, []);
 
-  const filteredExams = MOCK_EXAMS.filter(exam => {
+  const fetchCodesFromCloud = async () => {
+    setIsLoadingCodes(true);
+    try {
+      // credentials: 'omit' helps avoid CORS issues with multiple Google accounts logged in
+      const response = await fetch(
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`, 
+        { method: 'GET', credentials: 'omit' }
+      );
+      
+      if (!response.ok) throw new Error('Network response was not ok');
+      
+      const data = await response.json();
+      setExamCodes(data);
+      
+      // Load Exams list from the Cloud
+      // We initialize with local mocks, but if cloud has data, we overwrite it.
+      // This ensures all platforms see the same list (including edits/new exams).
+      let currentExams = [...MOCK_EXAMS];
+      
+      if (data['GLOBAL_EXAM_LIST']) {
+        try {
+          const cloudExams = JSON.parse(data['GLOBAL_EXAM_LIST']);
+          if (Array.isArray(cloudExams) && cloudExams.length > 0) {
+            currentExams = cloudExams;
+          }
+        } catch (e) {
+          console.error("Failed to parse global exam list", e);
+        }
+      }
+      setExams(currentExams);
+
+    } catch (error) {
+      console.warn("Could not fetch codes from cloud (offline or CORS):", error);
+      // Fallback to local mocks if cloud fails
+      setExams(MOCK_EXAMS);
+    } finally {
+      setIsLoadingCodes(false);
+    }
+  };
+
+  const syncCodeToCloud = async (id: string, value: string) => {
+    if (isAdmin) {
+      try {
+        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ 
+            lessonId: id, 
+            codes: value,
+            sheetId: GOOGLE_SHEET_ID 
+          })
+        });
+      } catch (e) {
+        console.error("Failed to sync to cloud:", e);
+      }
+    }
+  };
+
+  const updateGlobalExamList = (updatedExamsList: MockExam[]) => {
+    setExams(updatedExamsList);
+    // Save the FULL list to the cloud sheet. 
+    // This allows edits to standard exams and new exams to be persisted and synced.
+    syncCodeToCloud('GLOBAL_EXAM_LIST', JSON.stringify(updatedExamsList));
+  };
+
+  const saveCodesLocalAndCloud = (updatedCodes: Record<string, string>, changedId: string) => {
+    setExamCodes(updatedCodes);
+    syncCodeToCloud(changedId, updatedCodes[changedId] || '');
+  };
+
+  const filteredExams = exams.filter(exam => {
     const matchesGrade = exam.grade === activeGrade;
     const matchesType = activeType === 'All' || exam.type === activeType;
     return matchesGrade && matchesType;
   });
 
-  const handleEditClick = (id: string, currentCode: string) => {
+  // --- Code Logic ---
+  const handleEditCodeClick = (id: string, currentCode: string) => {
     setEditingId(id);
-    setTempCode(currentCode || '');
+    setEditCodeValue(currentCode || '');
   };
 
   const handleSaveCode = (id: string) => {
-    const updatedCodes = { ...examCodes, [id]: tempCode };
-    setExamCodes(updatedCodes);
-    localStorage.setItem('examCodes', JSON.stringify(updatedCodes));
+    const updatedCodes = { ...examCodes, [id]: editCodeValue.trim() };
+    saveCodesLocalAndCloud(updatedCodes, id);
     setEditingId(null);
+  };
+
+  const handleDeleteCode = (id: string) => {
+    if (window.confirm('Bạn có chắc muốn xóa mã đề này?')) {
+       const updatedCodes = { ...examCodes };
+       delete updatedCodes[id];
+       saveCodesLocalAndCloud(updatedCodes, id);
+       setEditingId(null);
+    }
   };
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     alert(`Đã sao chép mã đề: ${code}`);
+  };
+
+  // --- Exam Logic ---
+  const handleDeleteExam = (id: string) => {
+    if (window.confirm('Bạn có chắc muốn xóa đề thi này? Hành động này không thể hoàn tác.')) {
+      const updatedExams = exams.filter(e => e.id !== id);
+      updateGlobalExamList(updatedExams);
+      
+      // Also cleanup code
+      const updatedCodes = { ...examCodes };
+      delete updatedCodes[id];
+      saveCodesLocalAndCloud(updatedCodes, id);
+    }
+  };
+
+  const handleStartEditExam = (exam: MockExam) => {
+    setEditingExamId(exam.id);
+    setEditExamTitle(exam.title);
+    setEditExamDuration(exam.duration);
+  };
+
+  const handleSaveExamEdit = (id: string) => {
+    const updatedExams = exams.map(e => {
+      if (e.id === id) {
+        return { ...e, title: editExamTitle, duration: editExamDuration };
+      }
+      return e;
+    });
+    updateGlobalExamList(updatedExams);
+    setEditingExamId(null);
+  };
+
+  const handleAddExam = () => {
+    const id = `custom-${Date.now()}`;
+    const newExamEntry: MockExam = {
+      id,
+      title: newExam.title || `Đề kiểm tra ${newExam.grade} - Mới`,
+      grade: newExam.grade,
+      type: newExam.type,
+      duration: newExam.duration
+    };
+
+    // Update Exam List
+    const updatedExams = [newExamEntry, ...exams];
+    updateGlobalExamList(updatedExams);
+
+    // Update Code if provided
+    if (newExam.code) {
+      const updatedCodes = { ...examCodes, [id]: newExam.code };
+      saveCodesLocalAndCloud(updatedCodes, id);
+    }
+
+    setIsAddModalOpen(false);
+    // Reset form
+    setNewExam({
+      title: '',
+      grade: activeGrade,
+      type: ExamType.MID_TERM_1,
+      duration: 45,
+      code: ''
+    });
+    // Switch to the grade of the new exam to see it
+    setActiveGrade(newExam.grade);
+    setActiveType('All');
   };
 
   return (
@@ -99,7 +258,7 @@ const ExamHub: React.FC = () => {
                 key={grade}
                 onClick={() => {
                    setActiveGrade(grade);
-                   setActiveType('All'); // Reset type filter when changing grade
+                   setActiveType('All'); 
                 }}
                 className={`px-4 sm:px-6 py-3 rounded-xl text-sm font-bold transition-all shadow-sm border ${
                   activeGrade === grade
@@ -112,9 +271,9 @@ const ExamHub: React.FC = () => {
             ))}
           </div>
 
-          {/* Secondary Tabs: EXAM TYPE */}
-          <div className="flex justify-center">
-            <div className="inline-flex flex-wrap justify-center items-center gap-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+          {/* Secondary Tabs: EXAM TYPE & ADD BUTTON */}
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="inline-flex flex-wrap justify-center items-center gap-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200 w-full sm:w-auto">
                <div className="flex items-center gap-2 px-3 py-2 text-gray-400 text-sm font-medium border-r border-gray-100 mr-1 hidden sm:flex">
                  <Filter size={16} />
                  <span>Lọc theo:</span>
@@ -142,6 +301,24 @@ const ExamHub: React.FC = () => {
                  </button>
                ))}
             </div>
+
+            <div className="flex items-center gap-3">
+               {isLoadingCodes && (
+                  <div className="flex items-center text-blue-600 text-xs animate-pulse bg-blue-50 px-3 py-2 rounded-lg">
+                    <Loader2 size={14} className="animate-spin mr-2" />
+                    Đang đồng bộ...
+                  </div>
+               )}
+               {isAdmin && (
+                 <button 
+                   onClick={() => setIsAddModalOpen(true)}
+                   className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95"
+                 >
+                   <Plus size={20} />
+                   Thêm đề thi mới
+                 </button>
+               )}
+            </div>
           </div>
         </div>
 
@@ -150,11 +327,23 @@ const ExamHub: React.FC = () => {
           {filteredExams.length > 0 ? (
             filteredExams.map((exam) => {
               const code = examCodes[exam.id];
-              const isEditing = editingId === exam.id;
+              const isEditingCode = editingId === exam.id;
+              const isEditingExam = editingExamId === exam.id;
               const isSpecial = exam.type === ExamType.TS10 || exam.type === ExamType.THPTQG;
 
               return (
                 <div key={exam.id} className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col group relative">
+                  {/* Delete Button for Admin */}
+                  {isAdmin && (
+                     <button 
+                       onClick={() => handleDeleteExam(exam.id)}
+                       className="absolute top-2 right-2 p-1.5 bg-red-50 text-red-500 rounded-full hover:bg-red-100 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+                       title="Xóa đề thi"
+                     >
+                       <Trash2 size={16} />
+                     </button>
+                  )}
+
                   {isSpecial && (
                     <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-1 rounded-bl-lg z-10 shadow-sm flex items-center gap-1">
                       <Tag size={10} /> HOT
@@ -173,13 +362,50 @@ const ExamHub: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <span className="flex items-center text-gray-500 text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">
-                        <Clock size={12} className="mr-1" />
-                        {exam.duration}'
-                      </span>
+                      
+                      {isEditingExam ? (
+                         <div className="flex items-center gap-1">
+                           <input 
+                             type="number" 
+                             value={editExamDuration}
+                             onChange={(e) => setEditExamDuration(Number(e.target.value))}
+                             className="w-12 text-xs border rounded p-1"
+                           />
+                           <span className="text-xs">phút</span>
+                         </div>
+                      ) : (
+                        <span className="flex items-center text-gray-500 text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">
+                          <Clock size={12} className="mr-1" />
+                          {exam.duration}'
+                        </span>
+                      )}
                     </div>
                     
-                    <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-blue-700 transition-colors line-clamp-2 min-h-[3.5rem]">{exam.title}</h3>
+                    {/* Title Section */}
+                    <div className="mb-2 min-h-[3.5rem] flex items-start gap-2">
+                      {isEditingExam ? (
+                        <div className="w-full flex gap-2">
+                          <textarea 
+                            value={editExamTitle} 
+                            onChange={(e) => setEditExamTitle(e.target.value)}
+                            className="w-full text-sm font-bold border rounded p-1 focus:ring-1 focus:ring-blue-500 outline-none"
+                            rows={2}
+                          />
+                          <button onClick={() => handleSaveExamEdit(exam.id)} className="text-green-600 hover:bg-green-50 p-1 rounded"><Save size={16}/></button>
+                          <button onClick={() => setEditingExamId(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded"><X size={16}/></button>
+                        </div>
+                      ) : (
+                        <>
+                          <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-700 transition-colors line-clamp-2 w-full">{exam.title}</h3>
+                          {isAdmin && (
+                            <button onClick={() => handleStartEditExam(exam)} className="text-gray-400 hover:text-blue-600 shrink-0" title="Sửa tên đề">
+                               <Edit2 size={14} />
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+
                     <div className="flex items-center text-gray-500 text-sm mb-4">
                        <FileText size={16} className="mr-2" />
                        <span>{exam.type}</span>
@@ -189,23 +415,23 @@ const ExamHub: React.FC = () => {
                     <div className="mt-4 p-3 bg-blue-50/50 rounded-lg border border-dashed border-blue-200 hover:border-blue-300 transition-colors">
                        <div className="flex justify-between items-center mb-1">
                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Mã đề thi</span>
-                         {isAdmin && !isEditing && (
+                         {isAdmin && !isEditingCode && (
                            <button 
-                             onClick={() => handleEditClick(exam.id, code)}
+                             onClick={() => handleEditCodeClick(exam.id, code)}
                              className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-100 transition-colors"
-                             title="Giáo viên nhập mã đề"
+                             title="Chỉnh sửa mã đề"
                            >
                              <Edit2 size={14} />
                            </button>
                          )}
                        </div>
                        
-                       {isEditing ? (
+                       {isEditingCode ? (
                          <div className="flex gap-2">
                            <input 
                              type="text" 
-                             value={tempCode}
-                             onChange={(e) => setTempCode(e.target.value)}
+                             value={editCodeValue}
+                             onChange={(e) => setEditCodeValue(e.target.value)}
                              className="w-full text-sm border border-blue-300 rounded px-2 py-1 focus:ring-2 focus:ring-blue-200 outline-none"
                              placeholder="Nhập mã..."
                              autoFocus
@@ -215,6 +441,14 @@ const ExamHub: React.FC = () => {
                              className="bg-green-600 text-white p-1.5 rounded hover:bg-green-700 shadow-sm"
                            >
                              <Save size={16} />
+                           </button>
+                           {/* Only show delete if there was a code previously or deleting empty? just delete current entry */}
+                           <button 
+                             onClick={() => handleDeleteCode(exam.id)}
+                             className="bg-red-100 text-red-600 p-1.5 rounded hover:bg-red-200"
+                             title="Xóa mã đề"
+                           >
+                             <Trash2 size={16} />
                            </button>
                          </div>
                        ) : (
@@ -249,15 +483,109 @@ const ExamHub: React.FC = () => {
                    <CheckCircle size={48} className="text-gray-300" />
                  </div>
                  <p className="font-bold text-lg text-gray-600">Chưa có bài thi nào cho bộ lọc này.</p>
-                 <p className="text-sm mt-1 text-gray-500">Vui lòng chọn lớp hoặc loại kiểm tra khác để xem đề thi.</p>
-                 <button onClick={() => { setActiveGrade('6'); setActiveType('All'); }} className="mt-4 text-blue-600 hover:underline text-sm font-medium">
-                   Xem tất cả đề thi lớp 6
-                 </button>
+                 <p className="text-sm mt-1 text-gray-500">Vui lòng chọn lớp hoặc loại kiểm tra khác.</p>
+                 {isAdmin && (
+                   <button onClick={() => setIsAddModalOpen(true)} className="mt-4 text-blue-600 hover:underline font-bold">
+                     + Thêm bài thi ngay
+                   </button>
+                 )}
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* ADD EXAM MODAL */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in">
+            <div className="bg-blue-800 p-4 flex justify-between items-center text-white">
+              <h3 className="font-bold text-lg">Thêm Đề Thi Mới</h3>
+              <button onClick={() => setIsAddModalOpen(false)} className="hover:bg-blue-700 p-1 rounded-full"><X size={20}/></button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tên đề thi <span className="text-red-500">*</span></label>
+                <input 
+                  type="text" 
+                  value={newExam.title} 
+                  onChange={e => setNewExam({...newExam, title: e.target.value})}
+                  placeholder="VD: Đề kiểm tra 1 tiết Đại số..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Khối lớp</label>
+                  <select 
+                    value={newExam.grade} 
+                    onChange={e => setNewExam({...newExam, grade: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none"
+                  >
+                    {grades.map(g => <option key={g} value={g}>Lớp {g}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Thời gian (phút)</label>
+                  <input 
+                    type="number" 
+                    value={newExam.duration} 
+                    onChange={e => setNewExam({...newExam, duration: Number(e.target.value)})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Loại bài thi</label>
+                <select 
+                  value={newExam.type} 
+                  onChange={e => setNewExam({...newExam, type: e.target.value as ExamType})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none"
+                >
+                   {Object.values(ExamType).map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mã đề (Bắt buộc)</label>
+                <div className="flex items-center border border-gray-300 rounded-lg px-3 py-2 bg-gray-50">
+                  <span className="text-gray-400 mr-2 font-mono">CODE:</span>
+                  <input 
+                    type="text" 
+                    value={newExam.code} 
+                    onChange={e => setNewExam({...newExam, code: e.target.value})}
+                    placeholder="VD: TOAN6_GK1_01"
+                    className="w-full bg-transparent outline-none font-mono font-bold text-gray-800"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                 <button 
+                   onClick={() => setIsAddModalOpen(false)}
+                   className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200"
+                 >
+                   Hủy bỏ
+                 </button>
+                 <button 
+                   onClick={handleAddExam}
+                   disabled={!newExam.title || !newExam.code}
+                   className={`flex-1 py-2.5 text-white font-bold rounded-lg shadow-md transition-all ${
+                     (!newExam.title || !newExam.code) ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                   }`}
+                 >
+                   Lưu Đề Thi
+                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </section>
   );
 };

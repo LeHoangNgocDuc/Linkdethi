@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { MOCK_CURRICULUM, NAV_ITEMS, GOOGLE_SCRIPT_EXAM_URL } from '../constants';
-import { ChevronDown, ChevronRight, FileText, ExternalLink, CheckCircle, Copy, Edit2, Save } from 'lucide-react';
+import { MOCK_CURRICULUM, NAV_ITEMS, GOOGLE_SCRIPT_EXAM_URL, GOOGLE_SHEET_ID } from '../constants';
+import { ChevronDown, ChevronRight, FileText, ExternalLink, CheckCircle, Copy, Edit2, Save, Trash2, Plus, X, Loader2 } from 'lucide-react';
 
 const CurriculumView: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -10,24 +10,74 @@ const CurriculumView: React.FC = () => {
   // State for Admin and Exam Codes
   const [isAdmin, setIsAdmin] = useState(false);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
+  const [isLoadingCodes, setIsLoadingCodes] = useState(false);
+  
+  // State for Adding a new code
+  const [addingCodeFor, setAddingCodeFor] = useState<string | null>(null);
+  const [tempNewCode, setTempNewCode] = useState('');
+
+  // State for Editing an entire code string
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [tempCode, setTempCode] = useState('');
+  const [tempEditValue, setTempEditValue] = useState('');
 
   const gradeId = id || '6'; // Default to 6 if undefined
   const data = MOCK_CURRICULUM[gradeId];
 
   useEffect(() => {
-    // Check Admin status
     setIsAdmin(localStorage.getItem('isAdmin') === 'true');
-
-    // Load saved exam codes
-    const savedCodes = localStorage.getItem('curriculum_exam_codes');
-    if (savedCodes) {
-      setExamCodes(JSON.parse(savedCodes));
-    }
+    fetchCodesFromCloud();
   }, []);
 
-  // If grade not found (e.g. user typed /grade/99)
+  // --- API Sync Functions ---
+  const fetchCodesFromCloud = async () => {
+    setIsLoadingCodes(true);
+    try {
+      // Gọi lên Google Script để lấy dữ liệu từ Sheet
+      // credentials: 'omit' is crucial for avoiding CORS errors when multiple Google accounts are signed in
+      const response = await fetch(
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`, 
+        { method: 'GET', credentials: 'omit' }
+      );
+      
+      if (!response.ok) throw new Error("Network response was not ok");
+      
+      const data = await response.json();
+      setExamCodes(data);
+    } catch (error) {
+      console.warn("Failed to fetch codes (offline or CORS):", error);
+      // Fallback: use empty or cached data if available (optional)
+    } finally {
+      setIsLoadingCodes(false);
+    }
+  };
+
+  const saveCodesToCloud = async (newCodesMap: Record<string, string>, lessonIdToSync: string) => {
+    // 1. Cập nhật giao diện ngay lập tức (Optimistic UI)
+    setExamCodes(newCodesMap);
+    
+    // 2. Gửi dữ liệu lên Google Sheet
+    if (isAdmin) {
+      try {
+        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+          method: 'POST',
+          mode: 'no-cors', // Dùng no-cors để tránh lỗi chặn của trình duyệt với Google Script
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            lessonId: lessonIdToSync,
+            codes: newCodesMap[lessonIdToSync] || "",
+            sheetId: GOOGLE_SHEET_ID
+          })
+        });
+      } catch (error) {
+        console.error("Failed to save to cloud:", error);
+        alert("Lưu thất bại. Vui lòng kiểm tra kết nối mạng.");
+      }
+    }
+  };
+
+  // If grade not found
   if (!data) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center">
@@ -48,21 +98,77 @@ const CurriculumView: React.FC = () => {
     window.open(GOOGLE_SCRIPT_EXAM_URL, '_blank');
   };
 
-  const handleEditCode = (lessonId: string, currentCode: string) => {
-    setEditingId(lessonId);
-    setTempCode(currentCode || '');
+  const getCodesList = (codeString?: string): string[] => {
+    if (!codeString) return [];
+    return codeString.split(',').map(c => c.trim()).filter(Boolean);
   };
 
-  const handleSaveCode = (lessonId: string) => {
-    const updatedCodes = { ...examCodes, [lessonId]: tempCode.trim() };
-    setExamCodes(updatedCodes);
-    localStorage.setItem('curriculum_exam_codes', JSON.stringify(updatedCodes));
-    setEditingId(null);
-  };
+  // --- Actions ---
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    alert(`Đã sao chép mã đề: ${code}`);
+    alert(`Đã sao chép mã: ${code}`);
+  };
+
+  const handleAddCodeStart = (lessonId: string) => {
+    setAddingCodeFor(lessonId);
+    setTempNewCode('');
+    setEditingId(null);
+  };
+
+  const handleSaveNewCode = (lessonId: string) => {
+    if (!tempNewCode.trim()) {
+        setAddingCodeFor(null);
+        return;
+    }
+
+    const currentString = examCodes[lessonId] || '';
+    const currentList = getCodesList(currentString);
+    
+    // Check for duplicates
+    if (!currentList.includes(tempNewCode.trim())) {
+        const newList = [...currentList, tempNewCode.trim()];
+        const newString = newList.join(',');
+        const updatedCodes = { ...examCodes, [lessonId]: newString };
+        
+        saveCodesToCloud(updatedCodes, lessonId);
+    }
+    
+    setAddingCodeFor(null);
+    setTempNewCode('');
+  };
+
+  const handleRemoveSingleCode = (lessonId: string, codeToRemove: string) => {
+    if (!window.confirm(`Xóa mã đề "${codeToRemove}"?`)) return;
+
+    const currentString = examCodes[lessonId] || '';
+    const currentList = getCodesList(currentString);
+    const newList = currentList.filter(c => c !== codeToRemove);
+    const newString = newList.join(',');
+
+    const updatedCodes = { ...examCodes };
+    if (newString) {
+        updatedCodes[lessonId] = newString;
+    } else {
+        delete updatedCodes[lessonId];
+    }
+    
+    saveCodesToCloud(updatedCodes, lessonId);
+  };
+
+  // Legacy Edit (Edit the whole string)
+  const handleEditAllStart = (lessonId: string, currentString: string) => {
+    setEditingId(lessonId);
+    setTempEditValue(currentString);
+    setAddingCodeFor(null);
+  };
+
+  const handleSaveEditAll = (lessonId: string) => {
+    const updatedCodes = { ...examCodes, [lessonId]: tempEditValue.trim() };
+    if (!tempEditValue.trim()) delete updatedCodes[lessonId];
+    
+    saveCodesToCloud(updatedCodes, lessonId);
+    setEditingId(null);
   };
 
   return (
@@ -108,13 +214,21 @@ const CurriculumView: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="w-full lg:w-3/4">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-blue-900 mb-2">{data.title}</h1>
-            <p className="text-gray-600">
-              Danh sách các bài kiểm tra thường xuyên theo chương trình SGK. 
-              <br/>
-              Học sinh vui lòng sao chép <strong>Mã đề</strong> (nếu có) trước khi nhấn <strong>"Vào thi"</strong>.
-            </p>
+          <div className="mb-8 flex justify-between items-end">
+            <div>
+              <h1 className="text-3xl font-bold text-blue-900 mb-2">{data.title}</h1>
+              <p className="text-gray-600">
+                Danh sách các bài kiểm tra thường xuyên theo chương trình SGK. 
+                <br/>
+                Học sinh vui lòng sao chép <strong>Mã đề</strong> trước khi nhấn <strong>"Vào thi"</strong>.
+              </p>
+            </div>
+            {isLoadingCodes && (
+              <div className="flex items-center text-blue-600 text-sm animate-pulse">
+                <Loader2 size={16} className="animate-spin mr-2" />
+                Đang đồng bộ...
+              </div>
+            )}
           </div>
 
           <div className="space-y-4">
@@ -133,14 +247,16 @@ const CurriculumView: React.FC = () => {
                   <div className="p-4 bg-white">
                     <ul className="space-y-4">
                       {chapter.lessons.map((lesson) => {
-                        const code = examCodes[lesson.id];
-                        const isEditing = editingId === lesson.id;
+                        const codeString = examCodes[lesson.id];
+                        const codeList = getCodesList(codeString);
+                        const isAdding = addingCodeFor === lesson.id;
+                        const isEditingAll = editingId === lesson.id;
 
                         return (
-                          <li key={lesson.id} className="flex flex-col sm:flex-row items-center justify-between p-5 rounded-xl bg-white border border-gray-100 shadow-sm hover:shadow-md transition-all gap-4">
+                          <li key={lesson.id} className="flex flex-col md:flex-row items-start md:items-center justify-between p-5 rounded-xl bg-white border border-gray-100 shadow-sm hover:shadow-md transition-all gap-4">
                             
                             {/* Lesson Info */}
-                            <div className="flex items-start gap-3 w-full sm:w-auto flex-1">
+                            <div className="flex items-start gap-3 w-full md:w-auto flex-1">
                               <div className="p-2.5 bg-blue-100 text-blue-700 rounded-lg mt-0.5 shrink-0">
                                  <FileText size={20} />
                               </div>
@@ -150,62 +266,100 @@ const CurriculumView: React.FC = () => {
                               </div>
                             </div>
                             
-                            {/* Actions Group: Exam Code + Enter Exam Button */}
-                            <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto justify-end">
+                            {/* Actions Group */}
+                            <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
                               
-                              {/* Exam Code Section */}
-                              {isAdmin ? (
-                                <div className="flex items-center gap-2">
-                                  {isEditing ? (
-                                    <div className="flex items-center gap-2 animate-fade-in">
-                                      <input
-                                        type="text"
-                                        value={tempCode}
-                                        onChange={(e) => setTempCode(e.target.value)}
-                                        className="w-28 px-2 py-1.5 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-100 outline-none"
-                                        placeholder="Mã đề..."
-                                        autoFocus
-                                      />
-                                      <button 
-                                        onClick={() => handleSaveCode(lesson.id)}
-                                        className="p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
-                                      >
-                                        <Save size={16} />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div 
-                                      className="group flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-300 transition-all"
-                                      onClick={() => handleEditCode(lesson.id, code)}
-                                    >
-                                      <span className={`text-sm font-mono ${code ? 'text-gray-900 font-bold' : 'text-gray-400 italic'}`}>
-                                        {code || 'Nhập mã đề'}
-                                      </span>
-                                      <Edit2 size={14} className="text-gray-400 group-hover:text-blue-600" />
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                // Student View for Code
-                                code && (
-                                  <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg">
-                                    <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wide">Mã đề:</span>
+                              {/* --- Code Display Section --- */}
+                              <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
+                                
+                                {/* 1. List Existing Codes */}
+                                {!isEditingAll && codeList.map((code, idx) => (
+                                  <div key={idx} className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg transition-all hover:border-blue-300">
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase">MÃ:</span>
                                     <span className="text-sm font-mono font-bold text-blue-900">{code}</span>
-                                    <button 
-                                      onClick={() => handleCopyCode(code)}
-                                      className="ml-1 p-1 text-blue-400 hover:text-blue-700 hover:bg-blue-100 rounded transition-colors"
-                                      title="Sao chép mã đề"
-                                    >
-                                      <Copy size={14} />
-                                    </button>
+                                    
+                                    {isAdmin ? (
+                                        <button 
+                                          onClick={() => handleRemoveSingleCode(lesson.id, code)}
+                                          className="text-red-300 hover:text-red-600 ml-1 rounded-full p-0.5 hover:bg-red-50"
+                                          title="Xóa mã này"
+                                        >
+                                          <X size={14} />
+                                        </button>
+                                    ) : (
+                                        <button 
+                                          onClick={() => handleCopyCode(code)}
+                                          className="text-blue-400 hover:text-blue-700 ml-1 rounded p-0.5 hover:bg-blue-100"
+                                          title="Sao chép"
+                                        >
+                                          <Copy size={14} />
+                                        </button>
+                                    )}
                                   </div>
-                                )
-                              )}
+                                ))}
+
+                                {/* 2. Admin Actions */}
+                                {isAdmin && (
+                                  <>
+                                    {/* Add New Code Form */}
+                                    {isAdding ? (
+                                      <div className="flex items-center gap-1 animate-fade-in bg-white border border-blue-300 rounded-lg p-1 shadow-sm">
+                                        <input
+                                          type="text"
+                                          value={tempNewCode}
+                                          onChange={(e) => setTempNewCode(e.target.value)}
+                                          className="w-24 px-2 py-1 text-sm outline-none font-mono"
+                                          placeholder="Mã mới..."
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveNewCode(lesson.id);
+                                            if (e.key === 'Escape') setAddingCodeFor(null);
+                                          }}
+                                        />
+                                        <button onClick={() => handleSaveNewCode(lesson.id)} className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"><CheckCircle size={14}/></button>
+                                        <button onClick={() => setAddingCodeFor(null)} className="p-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200"><X size={14}/></button>
+                                      </div>
+                                    ) : !isEditingAll && (
+                                      <button 
+                                        onClick={() => handleAddCodeStart(lesson.id)}
+                                        className="flex items-center gap-1 px-3 py-1.5 bg-white border border-dashed border-gray-300 text-gray-500 rounded-lg hover:text-blue-600 hover:border-blue-400 transition-all"
+                                        title="Thêm mã đề khác"
+                                      >
+                                        <Plus size={14} />
+                                        <span className="text-xs font-bold">Thêm mã</span>
+                                      </button>
+                                    )}
+
+                                    {/* Bulk Edit Fallback */}
+                                    {isEditingAll ? (
+                                       <div className="flex items-center gap-1 w-full sm:w-auto">
+                                          <input
+                                            type="text"
+                                            value={tempEditValue}
+                                            onChange={(e) => setTempEditValue(e.target.value)}
+                                            className="w-full sm:w-40 px-2 py-1.5 text-sm border border-blue-300 rounded outline-none font-mono"
+                                            placeholder="Code1, Code2..."
+                                            autoFocus
+                                          />
+                                          <button onClick={() => handleSaveEditAll(lesson.id)} className="p-1.5 bg-green-100 text-green-700 rounded"><Save size={14}/></button>
+                                          <button onClick={() => setEditingId(null)} className="p-1.5 bg-gray-100 text-gray-500 rounded"><X size={14}/></button>
+                                       </div>
+                                    ) : (
+                                       // Only show edit pencil if there is something to edit
+                                       (codeList.length > 0) && (
+                                         <button onClick={() => handleEditAllStart(lesson.id, codeString || '')} className="text-gray-300 hover:text-blue-600 p-1">
+                                            <Edit2 size={12} />
+                                         </button>
+                                       )
+                                    )}
+                                  </>
+                                )}
+                              </div>
 
                               {/* Enter Exam Button */}
                               <button 
                                 onClick={handleEnterExam}
-                                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-colors shadow-sm whitespace-nowrap"
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-colors shadow-sm whitespace-nowrap"
                               >
                                 <span>Vào thi</span>
                                 <ExternalLink size={16} />
