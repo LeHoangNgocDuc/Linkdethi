@@ -130,6 +130,8 @@ const ExamHub: React.FC = () => {
         })
       });
       console.log(`Sent save request for ${id}: ${value}`);
+      // Notify user of success
+      alert("Đã lưu mã đề thành công lên Google Sheet!");
     } catch (e) {
       console.error("Failed to sync to cloud:", e);
       alert("Lỗi lưu dữ liệu lên Google Sheet. Vui lòng kiểm tra kết nối mạng.");

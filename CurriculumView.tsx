@@ -78,6 +78,8 @@ const CurriculumView: React.FC = () => {
           })
         });
         console.log(`Sent save request for ${lessonIdToSync}`);
+        // Notify user
+        alert("Đã lưu mã đề thành công lên Google Sheet!");
       } catch (error) {
         console.error("Failed to save to cloud:", error);
         alert("Không thể lưu lên Google Sheet. Kiểm tra lại kết nối.");
