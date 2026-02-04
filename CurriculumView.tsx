@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { MOCK_CURRICULUM, NAV_ITEMS, GOOGLE_SCRIPT_EXAM_URL } from '../constants';
+import { MOCK_CURRICULUM, NAV_ITEMS, GOOGLE_SCRIPT_EXAM_URL, GOOGLE_SHEET_ID } from '../constants';
 import { ChevronDown, ChevronRight, FileText, ExternalLink, CheckCircle, Copy, Edit2, Save, Trash2, Plus, X, Loader2 } from 'lucide-react';
 
 const CurriculumView: React.FC = () => {
@@ -32,42 +32,42 @@ const CurriculumView: React.FC = () => {
   const fetchCodesFromCloud = async () => {
     setIsLoadingCodes(true);
     try {
-      // Fetch with action=get_codes
-      const response = await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes`);
+      // Gọi lên Google Script để lấy dữ liệu từ Sheet
+      const response = await fetch(
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`
+      );
+      
+      if (!response.ok) throw new Error("Network response was not ok");
+      
       const data = await response.json();
       setExamCodes(data);
     } catch (error) {
-      console.error("Failed to fetch codes:", error);
-      // Fallback to local storage if API fails, or keep empty
-      const savedCodes = localStorage.getItem('curriculum_exam_codes');
-      if (savedCodes) setExamCodes(JSON.parse(savedCodes));
+      console.warn("Failed to fetch codes (offline or CORS):", error);
+      // Fallback: use empty or cached data if available (optional)
     } finally {
       setIsLoadingCodes(false);
     }
   };
 
   const saveCodesToCloud = async (newCodesMap: Record<string, string>, lessonIdToSync: string) => {
-    // 1. Optimistic Update (Update UI immediately)
+    // 1. Cập nhật giao diện ngay lập tức (Optimistic UI)
     setExamCodes(newCodesMap);
     
-    // 2. Sync to Google Sheet
+    // 2. Gửi dữ liệu lên Google Sheet using POST with body text
     if (isAdmin) {
       try {
-        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+        await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
-          mode: 'no-cors', // Important for Google Script simple triggers
-          headers: {
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify({
+            action: 'save_code',
+            sheetId: GOOGLE_SHEET_ID,
             lessonId: lessonIdToSync,
             codes: newCodesMap[lessonIdToSync] || ""
           })
         });
-        // Note: With no-cors we can't read the response, but the request is sent.
       } catch (error) {
         console.error("Failed to save to cloud:", error);
-        alert("Có lỗi khi lưu lên máy chủ. Vui lòng kiểm tra kết nối mạng.");
+        alert("Lưu thất bại. Vui lòng kiểm tra kết nối mạng.");
       }
     }
   };
@@ -102,7 +102,7 @@ const CurriculumView: React.FC = () => {
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    // Optional: Add toast here
+    alert(`Đã sao chép mã: ${code}`);
   };
 
   const handleAddCodeStart = (lessonId: string) => {

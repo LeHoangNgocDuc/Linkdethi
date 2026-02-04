@@ -3,7 +3,7 @@ import { GradeCurriculum, ExamType, MockExam } from './types';
 // The critical redirect URL provided in requirements
 export const GOOGLE_SCRIPT_EXAM_URL = "https://script.google.com/macros/s/AKfycbw4lhL3qwgcrlJD0QRoemyOmqIoxdE2a465Um7gnSkbElyicHcnCMfq95yPN7dGjTE6NQ/exec";
 
-// The Google Sheet ID provided for storage
+// The Google Sheet ID provided for storage (Updated per user request)
 export const GOOGLE_SHEET_ID = "1mRAbJ7INcNUKOaQhZTXp4zXopU2FSvzqe1zSTYGrfQk";
 
 export const CENTER_NAME = "TRUNG TÂM TOÁN HỌC";

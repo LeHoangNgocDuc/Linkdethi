@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X, Loader2 } from 'lucide-react';
 import { ExamType, MockExam } from '../types';
-import { MOCK_EXAMS, GOOGLE_SCRIPT_EXAM_URL } from '../constants';
+import { MOCK_EXAMS, GOOGLE_SCRIPT_EXAM_URL, GOOGLE_SHEET_ID } from '../constants';
 import ExamRedirectButton from './ExamRedirectButton';
 
 const ExamHub: React.FC = () => {
@@ -63,61 +63,75 @@ const ExamHub: React.FC = () => {
   useEffect(() => {
     const adminStatus = localStorage.getItem('isAdmin') === 'true';
     setIsAdmin(adminStatus);
-
-    // Load Exams
-    const savedExams = localStorage.getItem('exam_list');
-    if (savedExams) {
-      setExams(JSON.parse(savedExams));
-    } else {
-      setExams(MOCK_EXAMS); // Initialize with default mock data
-    }
-
-    // Load Codes from Cloud
     fetchCodesFromCloud();
   }, []);
 
   const fetchCodesFromCloud = async () => {
     setIsLoadingCodes(true);
     try {
-      const response = await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes`);
+      // Use standard GET request since the script now handles CORS and returns JSON directly
+      const response = await fetch(
+        `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`
+      );
+      
+      if (!response.ok) throw new Error('Network response was not ok');
+      
       const data = await response.json();
       setExamCodes(data);
-      localStorage.setItem('examCodes', JSON.stringify(data)); // Sync cache
+      
+      // Load Exams list from the Cloud
+      // We look for the "GLOBAL_EXAM_LIST" key which is stored in the exact same sheet
+      let currentExams = [...MOCK_EXAMS];
+      
+      if (data['GLOBAL_EXAM_LIST']) {
+        try {
+          // The value in the cell is a stringified JSON array
+          const cloudExams = JSON.parse(data['GLOBAL_EXAM_LIST']);
+          if (Array.isArray(cloudExams) && cloudExams.length > 0) {
+            currentExams = cloudExams;
+          }
+        } catch (e) {
+          console.error("Failed to parse global exam list", e);
+        }
+      }
+      setExams(currentExams);
+
     } catch (error) {
-      console.error("Failed to fetch codes:", error);
-      // Fallback to local
-      const savedCodes = localStorage.getItem('examCodes');
-      if (savedCodes) setExamCodes(JSON.parse(savedCodes));
+      console.warn("Could not fetch codes from cloud (offline or CORS):", error);
+      // Fallback to local mocks if cloud fails
+      setExams(MOCK_EXAMS);
     } finally {
       setIsLoadingCodes(false);
     }
   };
 
-  const syncCodeToCloud = async (id: string, code: string) => {
-    // 1. Update Cloud (Fire and forget, or handle error if needed)
+  const syncCodeToCloud = async (id: string, value: string) => {
     if (isAdmin) {
       try {
-        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+        // Send as POST text/plain to avoid CORS preflight issues with GAS
+        await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lessonId: id, codes: code })
+          body: JSON.stringify({ 
+            action: 'save_code',
+            sheetId: GOOGLE_SHEET_ID,
+            lessonId: id, 
+            codes: value
+          })
         });
       } catch (e) {
-        console.error("Failed to sync code:", e);
+        console.error("Failed to sync to cloud:", e);
       }
     }
   };
 
-  // Save changes to localStorage
-  const saveExamsToStorage = (updatedExams: MockExam[]) => {
-    setExams(updatedExams);
-    localStorage.setItem('exam_list', JSON.stringify(updatedExams));
+  const updateGlobalExamList = (updatedExamsList: MockExam[]) => {
+    setExams(updatedExamsList);
+    // Save the FULL list to the cloud sheet with key "GLOBAL_EXAM_LIST"
+    syncCodeToCloud('GLOBAL_EXAM_LIST', JSON.stringify(updatedExamsList));
   };
 
   const saveCodesLocalAndCloud = (updatedCodes: Record<string, string>, changedId: string) => {
     setExamCodes(updatedCodes);
-    localStorage.setItem('examCodes', JSON.stringify(updatedCodes));
     syncCodeToCloud(changedId, updatedCodes[changedId] || '');
   };
 
@@ -157,7 +171,7 @@ const ExamHub: React.FC = () => {
   const handleDeleteExam = (id: string) => {
     if (window.confirm('Bạn có chắc muốn xóa đề thi này? Hành động này không thể hoàn tác.')) {
       const updatedExams = exams.filter(e => e.id !== id);
-      saveExamsToStorage(updatedExams);
+      updateGlobalExamList(updatedExams);
       
       // Also cleanup code
       const updatedCodes = { ...examCodes };
@@ -179,7 +193,7 @@ const ExamHub: React.FC = () => {
       }
       return e;
     });
-    saveExamsToStorage(updatedExams);
+    updateGlobalExamList(updatedExams);
     setEditingExamId(null);
   };
 
@@ -195,7 +209,7 @@ const ExamHub: React.FC = () => {
 
     // Update Exam List
     const updatedExams = [newExamEntry, ...exams];
-    saveExamsToStorage(updatedExams);
+    updateGlobalExamList(updatedExams);
 
     // Update Code if provided
     if (newExam.code) {
@@ -382,7 +396,7 @@ const ExamHub: React.FC = () => {
                         <>
                           <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-700 transition-colors line-clamp-2 w-full">{exam.title}</h3>
                           {isAdmin && (
-                            <button onClick={() => handleStartEditExam(exam)} className="text-gray-400 hover:text-blue-600 shrink-0">
+                            <button onClick={() => handleStartEditExam(exam)} className="text-gray-400 hover:text-blue-600 shrink-0" title="Sửa tên đề">
                                <Edit2 size={14} />
                             </button>
                           )}
@@ -490,13 +504,14 @@ const ExamHub: React.FC = () => {
             
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tên đề thi</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tên đề thi <span className="text-red-500">*</span></label>
                 <input 
                   type="text" 
                   value={newExam.title} 
                   onChange={e => setNewExam({...newExam, title: e.target.value})}
                   placeholder="VD: Đề kiểm tra 1 tiết Đại số..."
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  autoFocus
                 />
               </div>
 
@@ -534,7 +549,7 @@ const ExamHub: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mã đề (Tùy chọn)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mã đề (Bắt buộc)</label>
                 <div className="flex items-center border border-gray-300 rounded-lg px-3 py-2 bg-gray-50">
                   <span className="text-gray-400 mr-2 font-mono">CODE:</span>
                   <input 
@@ -556,7 +571,10 @@ const ExamHub: React.FC = () => {
                  </button>
                  <button 
                    onClick={handleAddExam}
-                   className="flex-1 py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-md"
+                   disabled={!newExam.title || !newExam.code}
+                   className={`flex-1 py-2.5 text-white font-bold rounded-lg shadow-md transition-all ${
+                     (!newExam.title || !newExam.code) ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                   }`}
                  >
                    Lưu Đề Thi
                  </button>
