@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X, Loader2 } from 'lucide-react';
+import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X, Loader2, ExternalLink } from 'lucide-react';
 import { ExamType, MockExam } from '../types';
 import { MOCK_EXAMS, GOOGLE_SCRIPT_EXAM_URL, GOOGLE_SHEET_ID } from '../constants';
 import ExamRedirectButton from './ExamRedirectButton';
@@ -70,7 +70,7 @@ const ExamHub: React.FC = () => {
   const fetchCodesFromCloud = async () => {
     setIsLoadingCodes(true);
     try {
-      // credentials: 'omit' is crucial for public Google Apps Scripts to work when user is signed into Google
+      // credentials: 'omit' is crucial for public Google Apps Scripts
       const response = await fetch(
         `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`,
         { method: 'GET', credentials: 'omit' }
@@ -81,13 +81,10 @@ const ExamHub: React.FC = () => {
       const data = await response.json();
       setExamCodes(data);
       
-      // Load Exams list from the Cloud
-      // We look for the "GLOBAL_EXAM_LIST" key which is stored in the exact same sheet
+      // Load Exams list from the Cloud if available
       let currentExams = [...MOCK_EXAMS];
-      
       if (data['GLOBAL_EXAM_LIST']) {
         try {
-          // The value in the cell is a stringified JSON array
           const cloudExams = JSON.parse(data['GLOBAL_EXAM_LIST']);
           if (Array.isArray(cloudExams) && cloudExams.length > 0) {
             currentExams = cloudExams;
@@ -100,7 +97,6 @@ const ExamHub: React.FC = () => {
 
     } catch (error) {
       console.warn("Could not fetch codes from cloud (offline or CORS):", error);
-      // Fallback to local mocks if cloud fails
       setExams(MOCK_EXAMS);
     } finally {
       setIsLoadingCodes(false);
@@ -112,9 +108,8 @@ const ExamHub: React.FC = () => {
     
     setIsSaving(true);
     try {
-      // Use 'no-cors' mode to bypass browser CORS checks on POST requests to Google Apps Script.
-      // The response will be opaque (we can't read it), but the request will succeed.
-      // We MUST use 'text/plain' to avoid OPTION preflight requests which GAS often fails to handle.
+      // Use 'no-cors' mode to bypass browser CORS checks.
+      // We send both sheetId and sheet_id to be safe regarding the Script's variable naming.
       await fetch(GOOGLE_SCRIPT_EXAM_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -124,17 +119,22 @@ const ExamHub: React.FC = () => {
         },
         body: JSON.stringify({ 
           action: 'save_code',
-          sheetId: GOOGLE_SHEET_ID,
+          sheetId: GOOGLE_SHEET_ID, 
+          sheet_id: GOOGLE_SHEET_ID, // Redundant but safer
           lessonId: id, 
           codes: value
         })
       });
+      
       console.log(`Sent save request for ${id}: ${value}`);
-      // Notify user of success
-      alert("Đã lưu mã đề thành công lên Google Sheet!");
+      // Notify user of success immediately (Optimistic UI assumption due to no-cors opacity)
+      setTimeout(() => {
+        alert("✅ Đã lưu mã đề thành công lên Google Sheet!");
+      }, 500);
+
     } catch (e) {
       console.error("Failed to sync to cloud:", e);
-      alert("Lỗi lưu dữ liệu lên Google Sheet. Vui lòng kiểm tra kết nối mạng.");
+      alert("❌ Lỗi lưu dữ liệu. Vui lòng kiểm tra kết nối mạng.");
     } finally {
       setIsSaving(false);
     }
@@ -180,16 +180,15 @@ const ExamHub: React.FC = () => {
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    alert(`Đã sao chép mã đề: ${code}`);
+    alert(`📋 Đã sao chép mã đề: ${code}`);
   };
 
   // --- Exam Logic ---
   const handleDeleteExam = (id: string) => {
-    if (window.confirm('Bạn có chắc muốn xóa đề thi này? Hành động này không thể hoàn tác.')) {
+    if (window.confirm('Bạn có chắc muốn xóa đề thi này?')) {
       const updatedExams = exams.filter(e => e.id !== id);
       updateGlobalExamList(updatedExams);
       
-      // Also cleanup code
       const updatedCodes = { ...examCodes };
       delete updatedCodes[id];
       saveCodesLocalAndCloud(updatedCodes, id);
@@ -223,18 +222,15 @@ const ExamHub: React.FC = () => {
       duration: newExam.duration
     };
 
-    // Update Exam List
     const updatedExams = [newExamEntry, ...exams];
     updateGlobalExamList(updatedExams);
 
-    // Update Code if provided
     if (newExam.code) {
       const updatedCodes = { ...examCodes, [id]: newExam.code };
       saveCodesLocalAndCloud(updatedCodes, id);
     }
 
     setIsAddModalOpen(false);
-    // Reset form
     setNewExam({
       title: '',
       grade: activeGrade,
@@ -242,7 +238,6 @@ const ExamHub: React.FC = () => {
       duration: 45,
       code: ''
     });
-    // Switch to the grade of the new exam to see it
     setActiveGrade(newExam.grade);
     setActiveType('All');
   };
@@ -258,7 +253,7 @@ const ExamHub: React.FC = () => {
           <h2 className="text-3xl font-bold text-blue-900 mb-4">Phòng Kiểm Tra Định Kỳ</h2>
           <p className="text-gray-600 max-w-2xl mx-auto">
             Luyện tập với các đề thi Giữa kỳ, Cuối kỳ và Chuyển cấp (TS10, THPTQG). <br/>
-            Học sinh vui lòng nhập <strong>Mã đề</strong> để bắt đầu làm bài.
+            Học sinh vui lòng sao chép <strong>Mã đề</strong> và nhấn nút <strong>Vào làm bài thi</strong>.
           </p>
         </div>
 
@@ -285,7 +280,7 @@ const ExamHub: React.FC = () => {
             ))}
           </div>
 
-          {/* Secondary Tabs: EXAM TYPE & ADD BUTTON */}
+          {/* Secondary Tabs */}
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <div className="inline-flex flex-wrap justify-center items-center gap-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200 w-full sm:w-auto">
                <div className="flex items-center gap-2 px-3 py-2 text-gray-400 text-sm font-medium border-r border-gray-100 mr-1 hidden sm:flex">
@@ -347,7 +342,7 @@ const ExamHub: React.FC = () => {
 
               return (
                 <div key={exam.id} className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col group relative">
-                  {/* Delete Button for Admin */}
+                  
                   {isAdmin && (
                      <button 
                        onClick={() => handleDeleteExam(exam.id)}
@@ -365,6 +360,7 @@ const ExamHub: React.FC = () => {
                   )}
                   
                   <div className="p-6 flex-1">
+                    {/* Header: Class & Time */}
                     <div className="flex justify-between items-start mb-4">
                       <div className="flex gap-2">
                         <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-0.5 rounded border border-blue-200">
@@ -453,10 +449,10 @@ const ExamHub: React.FC = () => {
                            <button 
                              onClick={() => handleSaveCode(exam.id)}
                              className="bg-green-600 text-white p-1.5 rounded hover:bg-green-700 shadow-sm"
+                             title="Lưu mã đề"
                            >
                              <Save size={16} />
                            </button>
-                           {/* Only show delete if there was a code previously or deleting empty? just delete current entry */}
                            <button 
                              onClick={() => handleDeleteCode(exam.id)}
                              className="bg-red-100 text-red-600 p-1.5 rounded hover:bg-red-200"
@@ -466,17 +462,18 @@ const ExamHub: React.FC = () => {
                            </button>
                          </div>
                        ) : (
-                         <div className="flex items-center justify-between bg-white border border-blue-100 rounded px-3 py-2 shadow-sm">
-                            <span className={`font-mono font-bold text-lg ${code ? 'text-blue-700' : 'text-gray-300 italic text-sm'}`}>
+                         <div className="flex items-center justify-between bg-white border border-blue-100 rounded px-3 py-2 shadow-sm group/code">
+                            <span className={`font-mono font-bold text-lg select-all ${code ? 'text-blue-700' : 'text-gray-300 italic text-sm'}`}>
                               {code || "---"}
                             </span>
                             {code && (
                               <button 
                                 onClick={() => handleCopyCode(code)}
-                                className="text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50 transition-colors"
+                                className="flex items-center gap-1 bg-white hover:bg-green-50 text-gray-400 hover:text-green-600 border border-transparent hover:border-green-200 px-2 py-1 rounded transition-all shadow-sm"
                                 title="Sao chép mã"
                               >
-                                <Copy size={18} />
+                                <span className="text-xs font-bold hidden group-hover/code:inline">Copy</span>
+                                <Copy size={16} />
                               </button>
                             )}
                          </div>

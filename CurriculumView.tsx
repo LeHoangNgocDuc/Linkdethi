@@ -33,7 +33,6 @@ const CurriculumView: React.FC = () => {
   const fetchCodesFromCloud = async () => {
     setIsLoadingCodes(true);
     try {
-      // Gọi lên Google Script để lấy dữ liệu từ Sheet
       // credentials: 'omit' protects against CORS errors from Google's auth
       const response = await fetch(
         `${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes&sheet_id=${encodeURIComponent(GOOGLE_SHEET_ID)}`,
@@ -60,9 +59,8 @@ const CurriculumView: React.FC = () => {
     if (isAdmin) {
       setIsSaving(true);
       try {
-        // Use 'no-cors' mode to bypass browser CORS checks on POST requests to Google Apps Script.
-        // The response will be opaque (we can't read it), but the request will succeed.
-        // We MUST use 'text/plain' to avoid OPTION preflight requests which GAS often fails to handle.
+        // Use 'no-cors' mode to bypass browser CORS checks.
+        // We send both sheetId and sheet_id to be safe
         await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
           mode: 'no-cors',
@@ -73,16 +71,21 @@ const CurriculumView: React.FC = () => {
           body: JSON.stringify({
             action: 'save_code',
             sheetId: GOOGLE_SHEET_ID,
+            sheet_id: GOOGLE_SHEET_ID, // Redundant but safer
             lessonId: lessonIdToSync,
             codes: newCodesMap[lessonIdToSync] || ""
           })
         });
+        
         console.log(`Sent save request for ${lessonIdToSync}`);
         // Notify user
-        alert("Đã lưu mã đề thành công lên Google Sheet!");
+        setTimeout(() => {
+            alert("✅ Đã lưu mã đề thành công lên Google Sheet!");
+        }, 500);
+
       } catch (error) {
         console.error("Failed to save to cloud:", error);
-        alert("Không thể lưu lên Google Sheet. Kiểm tra lại kết nối.");
+        alert("❌ Không thể lưu lên Google Sheet. Kiểm tra lại kết nối.");
       } finally {
         setIsSaving(false);
       }
@@ -119,7 +122,7 @@ const CurriculumView: React.FC = () => {
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    alert(`Đã sao chép mã: ${code}`);
+    alert(`📋 Đã sao chép mã: ${code}`);
   };
 
   const handleAddCodeStart = (lessonId: string) => {
