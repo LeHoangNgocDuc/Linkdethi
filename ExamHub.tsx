@@ -13,6 +13,7 @@ const ExamHub: React.FC = () => {
   const [exams, setExams] = useState<MockExam[]>([]);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
   const [isLoadingCodes, setIsLoadingCodes] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // UI States
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -107,26 +108,31 @@ const ExamHub: React.FC = () => {
   };
 
   const syncCodeToCloud = async (id: string, value: string) => {
-    if (isAdmin) {
-      try {
-        // Explicitly set Content-Type to text/plain to avoid CORS Preflight (OPTIONS) requests which GAS usually fails to handle.
-        // credentials: 'omit' is required to avoid sending cookies.
-        await fetch(GOOGLE_SCRIPT_EXAM_URL, {
-          method: 'POST',
-          credentials: 'omit',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-          },
-          body: JSON.stringify({ 
-            action: 'save_code',
-            sheetId: GOOGLE_SHEET_ID,
-            lessonId: id, 
-            codes: value
-          })
-        });
-      } catch (e) {
-        console.error("Failed to sync to cloud:", e);
-      }
+    if (!isAdmin) return;
+    
+    setIsSaving(true);
+    try {
+      // Use 'text/plain' to avoid OPTION preflight requests which GAS often fails to handle
+      // This sends the JSON as a raw string body, which the updated GAS script parses successfully
+      await fetch(GOOGLE_SCRIPT_EXAM_URL, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({ 
+          action: 'save_code',
+          sheetId: GOOGLE_SHEET_ID,
+          lessonId: id, 
+          codes: value
+        })
+      });
+      console.log(`Saved code for ${id}: ${value}`);
+    } catch (e) {
+      console.error("Failed to sync to cloud:", e);
+      alert("Lỗi lưu dữ liệu lên Google Sheet. Vui lòng kiểm tra kết nối mạng.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -307,10 +313,10 @@ const ExamHub: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3">
-               {isLoadingCodes && (
+               {(isLoadingCodes || isSaving) && (
                   <div className="flex items-center text-blue-600 text-xs animate-pulse bg-blue-50 px-3 py-2 rounded-lg">
                     <Loader2 size={14} className="animate-spin mr-2" />
-                    Đang đồng bộ...
+                    {isSaving ? "Đang lưu..." : "Đang đồng bộ..."}
                   </div>
                )}
                {isAdmin && (

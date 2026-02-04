@@ -11,6 +11,7 @@ const CurriculumView: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
   const [isLoadingCodes, setIsLoadingCodes] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // State for Adding a new code
   const [addingCodeFor, setAddingCodeFor] = useState<string | null>(null);
@@ -57,7 +58,10 @@ const CurriculumView: React.FC = () => {
     
     // 2. Gửi dữ liệu lên Google Sheet using POST with body text
     if (isAdmin) {
+      setIsSaving(true);
       try {
+        // Use 'text/plain' content type. This prevents the browser from sending a CORS Preflight (OPTIONS) request.
+        // Google Apps Script `doPost` handles this by parsing the raw string body.
         await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
           credentials: 'omit',
@@ -71,9 +75,12 @@ const CurriculumView: React.FC = () => {
             codes: newCodesMap[lessonIdToSync] || ""
           })
         });
+        console.log(`Saved code for ${lessonIdToSync}`);
       } catch (error) {
         console.error("Failed to save to cloud:", error);
-        alert("Lưu thất bại. Vui lòng kiểm tra kết nối mạng.");
+        alert("Không thể lưu lên Google Sheet. Kiểm tra lại kết nối.");
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -224,12 +231,20 @@ const CurriculumView: React.FC = () => {
                 Học sinh vui lòng sao chép <strong>Mã đề</strong> trước khi nhấn <strong>"Vào thi"</strong>.
               </p>
             </div>
-            {isLoadingCodes && (
-              <div className="flex items-center text-blue-600 text-sm animate-pulse">
-                <Loader2 size={16} className="animate-spin mr-2" />
-                Đang đồng bộ...
-              </div>
-            )}
+            <div className="flex flex-col items-end">
+              {isLoadingCodes && (
+                <div className="flex items-center text-blue-600 text-sm animate-pulse">
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Đang đồng bộ...
+                </div>
+              )}
+              {isSaving && (
+                <div className="flex items-center text-green-600 text-sm font-bold animate-pulse mt-1">
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Đang lưu...
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="space-y-4">
