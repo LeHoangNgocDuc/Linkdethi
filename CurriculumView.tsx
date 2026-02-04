@@ -60,10 +60,12 @@ const CurriculumView: React.FC = () => {
     if (isAdmin) {
       setIsSaving(true);
       try {
-        // Use 'text/plain' content type. This prevents the browser from sending a CORS Preflight (OPTIONS) request.
-        // Google Apps Script `doPost` handles this by parsing the raw string body.
+        // Use 'no-cors' mode to bypass browser CORS checks on POST requests to Google Apps Script.
+        // The response will be opaque (we can't read it), but the request will succeed.
+        // We MUST use 'text/plain' to avoid OPTION preflight requests which GAS often fails to handle.
         await fetch(GOOGLE_SCRIPT_EXAM_URL, {
           method: 'POST',
+          mode: 'no-cors',
           credentials: 'omit',
           headers: {
             'Content-Type': 'text/plain;charset=utf-8',
@@ -75,7 +77,7 @@ const CurriculumView: React.FC = () => {
             codes: newCodesMap[lessonIdToSync] || ""
           })
         });
-        console.log(`Saved code for ${lessonIdToSync}`);
+        console.log(`Sent save request for ${lessonIdToSync}`);
       } catch (error) {
         console.error("Failed to save to cloud:", error);
         alert("Không thể lưu lên Google Sheet. Kiểm tra lại kết nối.");

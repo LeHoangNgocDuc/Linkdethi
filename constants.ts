@@ -1,7 +1,7 @@
 import { GradeCurriculum, ExamType, MockExam } from './types';
 
-// The critical redirect URL provided (Latest deployment)
-export const GOOGLE_SCRIPT_EXAM_URL = "https://script.google.com/macros/s/AKfycbw-0CFkiTgiMUKaPU6RN64rDMNZkUXrEcGNokiZLIHbHLL4wiHydb-_SJCCPJhwRFJKCQ/exec";
+// The critical redirect URL provided (Latest deployment - Updated by User)
+export const GOOGLE_SCRIPT_EXAM_URL = "https://script.google.com/macros/s/AKfycbw4lhL3qwgcrlJD0QRoemyOmqIoxdE2a465Um7gnSkbElyicHcnCMfq95yPN7dGjTE6NQ/exec";
 
 // The Google Sheet ID provided for storage
 export const GOOGLE_SHEET_ID = "1mRAbJ7INcNUKOaQhZTXp4zXopU2FSvzqe1zSTYGrfQk";
