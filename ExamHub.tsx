@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X } from 'lucide-react';
+import { Clock, CheckCircle, FileText, Copy, Edit2, Save, Tag, Filter, Plus, Trash2, X, Loader2 } from 'lucide-react';
 import { ExamType, MockExam } from '../types';
-import { MOCK_EXAMS } from '../constants';
+import { MOCK_EXAMS, GOOGLE_SCRIPT_EXAM_URL } from '../constants';
 import ExamRedirectButton from './ExamRedirectButton';
 
 const ExamHub: React.FC = () => {
@@ -12,6 +12,7 @@ const ExamHub: React.FC = () => {
   // State for exam list and codes
   const [exams, setExams] = useState<MockExam[]>([]);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
+  const [isLoadingCodes, setIsLoadingCodes] = useState(false);
   
   // UI States
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -71,12 +72,42 @@ const ExamHub: React.FC = () => {
       setExams(MOCK_EXAMS); // Initialize with default mock data
     }
 
-    // Load Codes
-    const savedCodes = localStorage.getItem('examCodes');
-    if (savedCodes) {
-      setExamCodes(JSON.parse(savedCodes));
-    }
+    // Load Codes from Cloud
+    fetchCodesFromCloud();
   }, []);
+
+  const fetchCodesFromCloud = async () => {
+    setIsLoadingCodes(true);
+    try {
+      const response = await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes`);
+      const data = await response.json();
+      setExamCodes(data);
+      localStorage.setItem('examCodes', JSON.stringify(data)); // Sync cache
+    } catch (error) {
+      console.error("Failed to fetch codes:", error);
+      // Fallback to local
+      const savedCodes = localStorage.getItem('examCodes');
+      if (savedCodes) setExamCodes(JSON.parse(savedCodes));
+    } finally {
+      setIsLoadingCodes(false);
+    }
+  };
+
+  const syncCodeToCloud = async (id: string, code: string) => {
+    // 1. Update Cloud (Fire and forget, or handle error if needed)
+    if (isAdmin) {
+      try {
+        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lessonId: id, codes: code })
+        });
+      } catch (e) {
+        console.error("Failed to sync code:", e);
+      }
+    }
+  };
 
   // Save changes to localStorage
   const saveExamsToStorage = (updatedExams: MockExam[]) => {
@@ -84,9 +115,10 @@ const ExamHub: React.FC = () => {
     localStorage.setItem('exam_list', JSON.stringify(updatedExams));
   };
 
-  const saveCodesToStorage = (updatedCodes: Record<string, string>) => {
+  const saveCodesLocalAndCloud = (updatedCodes: Record<string, string>, changedId: string) => {
     setExamCodes(updatedCodes);
     localStorage.setItem('examCodes', JSON.stringify(updatedCodes));
+    syncCodeToCloud(changedId, updatedCodes[changedId] || '');
   };
 
   const filteredExams = exams.filter(exam => {
@@ -103,7 +135,7 @@ const ExamHub: React.FC = () => {
 
   const handleSaveCode = (id: string) => {
     const updatedCodes = { ...examCodes, [id]: editCodeValue.trim() };
-    saveCodesToStorage(updatedCodes);
+    saveCodesLocalAndCloud(updatedCodes, id);
     setEditingId(null);
   };
 
@@ -111,7 +143,7 @@ const ExamHub: React.FC = () => {
     if (window.confirm('Bạn có chắc muốn xóa mã đề này?')) {
        const updatedCodes = { ...examCodes };
        delete updatedCodes[id];
-       saveCodesToStorage(updatedCodes);
+       saveCodesLocalAndCloud(updatedCodes, id);
        setEditingId(null);
     }
   };
@@ -130,7 +162,7 @@ const ExamHub: React.FC = () => {
       // Also cleanup code
       const updatedCodes = { ...examCodes };
       delete updatedCodes[id];
-      saveCodesToStorage(updatedCodes);
+      saveCodesLocalAndCloud(updatedCodes, id);
     }
   };
 
@@ -168,7 +200,7 @@ const ExamHub: React.FC = () => {
     // Update Code if provided
     if (newExam.code) {
       const updatedCodes = { ...examCodes, [id]: newExam.code };
-      saveCodesToStorage(updatedCodes);
+      saveCodesLocalAndCloud(updatedCodes, id);
     }
 
     setIsAddModalOpen(false);
@@ -254,15 +286,23 @@ const ExamHub: React.FC = () => {
                ))}
             </div>
 
-            {isAdmin && (
-              <button 
-                onClick={() => setIsAddModalOpen(true)}
-                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95"
-              >
-                <Plus size={20} />
-                Thêm đề thi mới
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+               {isLoadingCodes && (
+                  <div className="flex items-center text-blue-600 text-xs animate-pulse bg-blue-50 px-3 py-2 rounded-lg">
+                    <Loader2 size={14} className="animate-spin mr-2" />
+                    Đang đồng bộ...
+                  </div>
+               )}
+               {isAdmin && (
+                 <button 
+                   onClick={() => setIsAddModalOpen(true)}
+                   className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95"
+                 >
+                   <Plus size={20} />
+                   Thêm đề thi mới
+                 </button>
+               )}
+            </div>
           </div>
         </div>
 

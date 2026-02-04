@@ -1,7 +1,7 @@
 import { GradeCurriculum, ExamType, MockExam } from './types';
 
 // The critical redirect URL provided in requirements
-export const GOOGLE_SCRIPT_EXAM_URL = "https://script.google.com/macros/s/AKfycbw4lhL3qwgcrlJD0QRoemyOmqIoxdE2a465Um7gnSkbElyicHcnCMfq95yPN7dGjTE6NQ/exec";
+export const GOOGLE_SCRIPT_EXAM_URL = "https://script.google.com/macros/s/AKfycby9HHLcmieYIB9xBE7RgqTuKh051DRng7AGJ8k9_jxU3Bo3MAvIJ483io2TxWeojw4AUA/exec";
 
 export const CENTER_NAME = "TRUNG TÂM TOÁN HỌC";
 
