@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { MOCK_CURRICULUM, NAV_ITEMS, GOOGLE_SCRIPT_EXAM_URL } from '../constants';
-import { ChevronDown, ChevronRight, FileText, ExternalLink, CheckCircle, Copy, Edit2, Save, Trash2, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, ExternalLink, CheckCircle, Copy, Edit2, Save, Trash2, Plus, X, Loader2 } from 'lucide-react';
 
 const CurriculumView: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -10,12 +10,13 @@ const CurriculumView: React.FC = () => {
   // State for Admin and Exam Codes
   const [isAdmin, setIsAdmin] = useState(false);
   const [examCodes, setExamCodes] = useState<Record<string, string>>({});
+  const [isLoadingCodes, setIsLoadingCodes] = useState(false);
   
   // State for Adding a new code
   const [addingCodeFor, setAddingCodeFor] = useState<string | null>(null);
   const [tempNewCode, setTempNewCode] = useState('');
 
-  // State for Editing an entire code string (legacy/bulk edit)
+  // State for Editing an entire code string
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempEditValue, setTempEditValue] = useState('');
 
@@ -23,17 +24,55 @@ const CurriculumView: React.FC = () => {
   const data = MOCK_CURRICULUM[gradeId];
 
   useEffect(() => {
-    // Check Admin status
     setIsAdmin(localStorage.getItem('isAdmin') === 'true');
-
-    // Load saved exam codes
-    const savedCodes = localStorage.getItem('curriculum_exam_codes');
-    if (savedCodes) {
-      setExamCodes(JSON.parse(savedCodes));
-    }
+    fetchCodesFromCloud();
   }, []);
 
-  // If grade not found (e.g. user typed /grade/99)
+  // --- API Sync Functions ---
+  const fetchCodesFromCloud = async () => {
+    setIsLoadingCodes(true);
+    try {
+      // Fetch with action=get_codes
+      const response = await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=get_codes`);
+      const data = await response.json();
+      setExamCodes(data);
+    } catch (error) {
+      console.error("Failed to fetch codes:", error);
+      // Fallback to local storage if API fails, or keep empty
+      const savedCodes = localStorage.getItem('curriculum_exam_codes');
+      if (savedCodes) setExamCodes(JSON.parse(savedCodes));
+    } finally {
+      setIsLoadingCodes(false);
+    }
+  };
+
+  const saveCodesToCloud = async (newCodesMap: Record<string, string>, lessonIdToSync: string) => {
+    // 1. Optimistic Update (Update UI immediately)
+    setExamCodes(newCodesMap);
+    
+    // 2. Sync to Google Sheet
+    if (isAdmin) {
+      try {
+        await fetch(`${GOOGLE_SCRIPT_EXAM_URL}?action=save_code`, {
+          method: 'POST',
+          mode: 'no-cors', // Important for Google Script simple triggers
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            lessonId: lessonIdToSync,
+            codes: newCodesMap[lessonIdToSync] || ""
+          })
+        });
+        // Note: With no-cors we can't read the response, but the request is sent.
+      } catch (error) {
+        console.error("Failed to save to cloud:", error);
+        alert("Có lỗi khi lưu lên máy chủ. Vui lòng kiểm tra kết nối mạng.");
+      }
+    }
+  };
+
+  // If grade not found
   if (!data) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center">
@@ -54,7 +93,6 @@ const CurriculumView: React.FC = () => {
     window.open(GOOGLE_SCRIPT_EXAM_URL, '_blank');
   };
 
-  // --- Helper to parse codes separated by comma ---
   const getCodesList = (codeString?: string): string[] => {
     if (!codeString) return [];
     return codeString.split(',').map(c => c.trim()).filter(Boolean);
@@ -64,13 +102,13 @@ const CurriculumView: React.FC = () => {
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    // Optional: Toast notification here
+    // Optional: Add toast here
   };
 
   const handleAddCodeStart = (lessonId: string) => {
     setAddingCodeFor(lessonId);
     setTempNewCode('');
-    setEditingId(null); // Close other edit modes
+    setEditingId(null);
   };
 
   const handleSaveNewCode = (lessonId: string) => {
@@ -86,10 +124,9 @@ const CurriculumView: React.FC = () => {
     if (!currentList.includes(tempNewCode.trim())) {
         const newList = [...currentList, tempNewCode.trim()];
         const newString = newList.join(',');
-        
         const updatedCodes = { ...examCodes, [lessonId]: newString };
-        setExamCodes(updatedCodes);
-        localStorage.setItem('curriculum_exam_codes', JSON.stringify(updatedCodes));
+        
+        saveCodesToCloud(updatedCodes, lessonId);
     }
     
     setAddingCodeFor(null);
@@ -111,8 +148,7 @@ const CurriculumView: React.FC = () => {
         delete updatedCodes[lessonId];
     }
     
-    setExamCodes(updatedCodes);
-    localStorage.setItem('curriculum_exam_codes', JSON.stringify(updatedCodes));
+    saveCodesToCloud(updatedCodes, lessonId);
   };
 
   // Legacy Edit (Edit the whole string)
@@ -126,8 +162,7 @@ const CurriculumView: React.FC = () => {
     const updatedCodes = { ...examCodes, [lessonId]: tempEditValue.trim() };
     if (!tempEditValue.trim()) delete updatedCodes[lessonId];
     
-    setExamCodes(updatedCodes);
-    localStorage.setItem('curriculum_exam_codes', JSON.stringify(updatedCodes));
+    saveCodesToCloud(updatedCodes, lessonId);
     setEditingId(null);
   };
 
@@ -174,13 +209,21 @@ const CurriculumView: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="w-full lg:w-3/4">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-blue-900 mb-2">{data.title}</h1>
-            <p className="text-gray-600">
-              Danh sách các bài kiểm tra thường xuyên theo chương trình SGK. 
-              <br/>
-              Học sinh vui lòng sao chép <strong>Mã đề</strong> trước khi nhấn <strong>"Vào thi"</strong>.
-            </p>
+          <div className="mb-8 flex justify-between items-end">
+            <div>
+              <h1 className="text-3xl font-bold text-blue-900 mb-2">{data.title}</h1>
+              <p className="text-gray-600">
+                Danh sách các bài kiểm tra thường xuyên theo chương trình SGK. 
+                <br/>
+                Học sinh vui lòng sao chép <strong>Mã đề</strong> trước khi nhấn <strong>"Vào thi"</strong>.
+              </p>
+            </div>
+            {isLoadingCodes && (
+              <div className="flex items-center text-blue-600 text-sm animate-pulse">
+                <Loader2 size={16} className="animate-spin mr-2" />
+                Đang đồng bộ...
+              </div>
+            )}
           </div>
 
           <div className="space-y-4">
@@ -282,7 +325,7 @@ const CurriculumView: React.FC = () => {
                                       </button>
                                     )}
 
-                                    {/* Bulk Edit Fallback (Optional, but good for fixing mistakes) */}
+                                    {/* Bulk Edit Fallback */}
                                     {isEditingAll ? (
                                        <div className="flex items-center gap-1 w-full sm:w-auto">
                                           <input
