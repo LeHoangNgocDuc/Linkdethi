@@ -1,0 +1,5 @@
+{
+  "name": "Math Center Hub",
+  "description": "A centralized educational portal for a Math Center, featuring curriculum navigation and redirection to an external online exam system.",
+  "requestFramePermissions": []
+}
